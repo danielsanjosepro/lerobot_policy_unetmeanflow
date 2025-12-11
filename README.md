@@ -1,7 +1,8 @@
-> [!WARNING] This repository only works with old version of lerobot, before they introduced the processors. 
+> [!WARNING]
+> This repository only works with old version of lerobot, before they introduced the processors. 
 > The newer version is jet to be implemented.
 
-# LeRobot UNet MeanFlow
+# LeRobot U-Net MeanFlow
 
 This repository implements the MeanFlow objective for a policy with a **U-Net backbone**.
 
