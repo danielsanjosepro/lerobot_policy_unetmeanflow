@@ -1,5 +1,5 @@
 > [!WARNING]
-> This repository only works with old version of lerobot, before they introduced the processors. 
+> This repository only works with old version of lerobot (dataset v2.1), before they introduced the processors. 
 > The newer version is jet to be implemented.
 
 # LeRobot U-Net MeanFlow
@@ -21,6 +21,7 @@ With MeanFlow, only **one step inference** is required during deployment, making
 ### Installation
 
 ```bash
+git clone https://github.com/danielsanjosepro/lerobot.git -b external-policies-v2.1  # This is temporary
 git clone https://github.com/danielsanjosepro/lerobot_policy_unetmeanflow.git
 cd lerobot_policy_unetmeanflow
 
