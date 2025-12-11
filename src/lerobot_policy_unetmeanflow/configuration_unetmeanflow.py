@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 from dataclasses import dataclass, field
+import logging
 
 from typing_extensions import override
 
@@ -9,6 +10,8 @@ from lerobot.configs.types import NormalizationMode
 from lerobot.constants import ACTION
 from lerobot.optim.optimizers import AdamConfig
 from lerobot.optim.schedulers import DiffuserSchedulerConfig
+
+logger = logging.getLogger(__name__)
 
 
 @PreTrainedConfig.register_subclass("unetmeanflow")
@@ -56,8 +59,8 @@ class UnetMeanFlowConfig(PreTrainedConfig):
         use_film_scale_modulation: Whether to use scale modulation in addition to bias modulation for FiLM.
 
         # From DiTMeanFlowConfig - meanflow algorithm
-        use_meanflow: Whether to use meanflow algorithm (vs standard flow matching). Default: True (FIXED).
-        use_adaptative_loss: Whether to use adaptive loss weighting or MSE loss. Default: True (FIXED).
+        use_meanflow: Whether to use meanflow algorithm (vs standard flow matching). Default: True.
+        use_adaptative_loss: Whether to use adaptive loss weighting or MSE loss. Default: True.
         use_autograd_functional_jvp: Whether to use torch.autograd.functional.jvp instead of torch.func.jvp.
         flow_ratio: Ratio of sampled ts and rs that are the same (resulting in standard flow setting).
         time_distribution: Distribution to use for sampling t and r ("uniform" or "lognorm").
@@ -83,12 +86,11 @@ class UnetMeanFlowConfig(PreTrainedConfig):
     horizon: int = 16
     n_action_steps: int = 8
 
-    # FIXED: Change ACTION normalization to MEAN_STD (was MIN_MAX)
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.MEAN_STD,
             "STATE": NormalizationMode.MIN_MAX,
-            "ACTION": NormalizationMode.MEAN_STD,  # FIXED: was MIN_MAX
+            "ACTION": NormalizationMode.MEAN_STD,
         }
     )
 
@@ -101,20 +103,20 @@ class UnetMeanFlowConfig(PreTrainedConfig):
     crop_shape: tuple[int, int] | None = None
     crop_is_random: bool = False
     pretrained_backbone_weights: str | None = None
-    use_group_norm: bool = True
+    use_group_norm: bool = False
     spatial_softmax_num_keypoints: int = 32
-    use_separate_rgb_encoder_per_camera: bool = False
+    use_separate_rgb_encoder_per_camera: bool = True
 
     # U-Net architecture (from DiffusionConfig)
-    down_dims: tuple[int, ...] = (512, 1024, 2048)
+    # down_dims: tuple[int, ...] = (512, 1024, 2048)
+    down_dims: tuple[int, ...] = (256, 512, 1024)
     kernel_size: int = 5
     n_groups: int = 8
     diffusion_step_embed_dim: int = 128
     use_film_scale_modulation: bool = True
 
-    # Meanflow algorithm parameters (from DiTMeanFlowConfig)
-    # FIXED: Set use_meanflow to True by default (was False)
-    use_meanflow: bool = True  # FIXED: was False
+    # Meanflow loss parameters
+    use_meanflow: bool = True
 
     # Time sampling parameters
     time_distribution: str = "uniform"  # "uniform" or "lognorm"
@@ -122,18 +124,14 @@ class UnetMeanFlowConfig(PreTrainedConfig):
     log_norm_sigma: float = 1.0
 
     # Loss parameters
-    # FIXED: Set use_adaptative_loss to True by default (was False)
-    use_adaptative_loss: bool = True  # FIXED: was False
+    use_adaptative_loss: bool = True
     flow_ratio: float = 0.5  # Ratio of samples where t == r (standard flow)
 
-    # FIXED: Add use_autograd_functional_jvp parameter (was missing)
     use_autograd_functional_jvp: bool = False
 
-    # Inference parameters
-    do_multi_step_sampling: bool = (
-        False  # Use one-step sampling by default for meanflow
-    )
-    inference_timesteps: int = 1  # FIXED: was 100, should be 1 for one-step
+    # Inference parameters. Use one-step sampling by default for meanflow
+    do_multi_step_sampling: bool = False
+    inference_timesteps: int = 1
 
     # Classifier-free guidance parameters
     cfg_prob: float = 0.1
@@ -156,7 +154,6 @@ class UnetMeanFlowConfig(PreTrainedConfig):
     scheduler_warmup_steps: int = 500
 
     features_to_exclude: list[str] = field(default_factory=lambda: [])
-
     # NOTE: if you set features to include, features_to_exclude is ignored.
     features_to_include: list[str] | None = None
 
@@ -219,7 +216,7 @@ class UnetMeanFlowConfig(PreTrainedConfig):
                     feature not in self.input_features
                     and feature not in self.output_features
                 ):
-                    raise ValueError(
+                    logger.warning(
                         f"Feature '{feature}' in `features_to_include` not found in input or output features."
                         f" Available input features: {list(self.input_features.keys())}. "
                         f"Available output features: {list(self.output_features.keys())}."
@@ -241,7 +238,7 @@ class UnetMeanFlowConfig(PreTrainedConfig):
             elif feature_to_exclude in self.output_features:
                 del self.output_features[feature_to_exclude]
             else:
-                raise ValueError(
+                logger.warning(
                     f"Feature '{feature_to_exclude}' not found in input or output features."
                     f" Available input features: {list(self.input_features.keys())}. "
                     f"Available output features: {list(self.output_features.keys())}."

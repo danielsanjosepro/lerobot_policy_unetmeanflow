@@ -23,7 +23,6 @@ import torch.nn.functional as F
 from collections import deque
 from functools import partial
 from typing import Callable
-from typing_extensions import override
 
 import einops
 import torchvision
@@ -67,7 +66,9 @@ class UnetMeanFlowPolicy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
 
-        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
+        self.normalize_inputs = Normalize(
+            config.input_features, config.normalization_mapping, dataset_stats
+        )
         self.normalize_targets = Normalize(
             config.output_features, config.normalization_mapping, dataset_stats
         )
@@ -94,13 +95,19 @@ class UnetMeanFlowPolicy(PreTrainedPolicy):
         if self.config.image_features:
             self._queues["observation.images"] = deque(maxlen=self.config.n_obs_steps)
         if self.config.env_state_feature:
-            self._queues["observation.environment_state"] = deque(maxlen=self.config.n_obs_steps)
+            self._queues["observation.environment_state"] = deque(
+                maxlen=self.config.n_obs_steps
+            )
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
         """Predict a chunk of actions given environment observations."""
         # stack n latest observations from the queue
-        batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
+        batch = {
+            k: torch.stack(list(self._queues[k]), dim=1)
+            for k in batch
+            if k in self._queues
+        }
         actions = self.unet_meanflow.generate_actions(batch)
 
         actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
@@ -131,8 +138,12 @@ class UnetMeanFlowPolicy(PreTrainedPolicy):
         """
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
-            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-            batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
+            batch = dict(
+                batch
+            )  # shallow copy so that adding a key doesn't modify the original
+            batch[OBS_IMAGES] = torch.stack(
+                [batch[key] for key in self.config.image_features], dim=-4
+            )
         # Note: It's important that this happens after stacking the images into a single key.
         self._queues = populate_queues(self._queues, batch)
 
@@ -147,8 +158,12 @@ class UnetMeanFlowPolicy(PreTrainedPolicy):
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
-            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-            batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
+            batch = dict(
+                batch
+            )  # shallow copy so that adding a key doesn't modify the original
+            batch[OBS_IMAGES] = torch.stack(
+                [batch[key] for key in self.config.image_features], dim=-4
+            )
         batch = self.normalize_targets(batch)
         loss = self.unet_meanflow.compute_loss(batch)
         # no output_dict so returning None
@@ -178,7 +193,6 @@ class UnetMeanFlowModel(nn.Module):
             config, global_cond_dim=global_cond_dim * config.n_obs_steps
         )
 
-        # FIXED: Add JVP configuration (based on DiTMeanFlow)
         self.jvp_func = None
         if self.config.use_autograd_functional_jvp:
             import torch.autograd.functional
@@ -199,7 +213,6 @@ class UnetMeanFlowModel(nn.Module):
             raise ValueError("JVP function not initialized.")
         return self.jvp_func(func, primals, tangents)
 
-    # ========= inference  ============
     def conditional_sample(
         self,
         batch_size: int,
@@ -242,7 +255,9 @@ class UnetMeanFlowModel(nn.Module):
         sample = sample - velocity
 
         if self.config.clip_sample:
-            sample = torch.clamp(sample, -self.config.clip_sample_range, self.config.clip_sample_range)
+            sample = torch.clamp(
+                sample, -self.config.clip_sample_range, self.config.clip_sample_range
+            )
 
         return sample
 
@@ -258,24 +273,27 @@ class UnetMeanFlowModel(nn.Module):
         timesteps = self.config.inference_timesteps
         dt = 1.0 / timesteps
 
-        # FIXED: Use linspace with timesteps + 1 (matching DiTMeanFlow)
         t_vals = torch.linspace(0.0, 1.0, timesteps + 1, device=device)
 
         for k in range(timesteps):
-            # FIXED: Use torch.full for consistent batch dimensions and proper indexing
             t = torch.full((batch_size,), t_vals[k], device=device)
             r = torch.full((batch_size,), t_vals[k + 1], device=device)
 
-            # FIXED: Get velocity and integrate properly
             u = self.unet(sample, t=t, r=r, global_cond=global_cond)
             sample = sample - dt * u
 
             if self.config.clip_sample:
-                sample = torch.clamp(sample, -self.config.clip_sample_range, self.config.clip_sample_range)
+                sample = torch.clamp(
+                    sample,
+                    -self.config.clip_sample_range,
+                    self.config.clip_sample_range,
+                )
 
         return sample
 
-    def _prepare_global_conditioning(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
+    def _prepare_global_conditioning(
+        self, batch: dict[str, torch.Tensor]
+    ) -> torch.Tensor:
         """Encode image features and concatenate them all together along with the state vector."""
         batch_size, n_obs_steps = batch[OBS_STATE].shape[:2]
         global_cond_feats = []
@@ -296,21 +314,31 @@ class UnetMeanFlowModel(nn.Module):
                 img_features_list = torch.cat(
                     [
                         encoder(images)
-                        for encoder, images in zip(self.rgb_encoder, images_per_camera, strict=True)
+                        for encoder, images in zip(
+                            self.rgb_encoder, images_per_camera, strict=True
+                        )
                     ]
                 )
                 # Separate batch and sequence dims back out. The camera index dim gets absorbed into the
                 # feature dim (effectively concatenating the camera features).
                 img_features = einops.rearrange(
-                    img_features_list, "(n b s) ... -> b s (n ...)", b=batch_size, s=n_obs_steps
+                    img_features_list,
+                    "(n b s) ... -> b s (n ...)",
+                    b=batch_size,
+                    s=n_obs_steps,
                 )
             else:
                 # Combine batch, sequence, and "which camera" dims before passing to shared encoder.
-                img_features = self.rgb_encoder(einops.rearrange(images, "b s n ... -> (b s n) ..."))
+                img_features = self.rgb_encoder(
+                    einops.rearrange(images, "b s n ... -> (b s n) ...")
+                )
                 # Separate batch dim and sequence dim back out. The camera index dim gets absorbed into the
                 # feature dim (effectively concatenating the camera features).
                 img_features = einops.rearrange(
-                    img_features, "(b s n) ... -> b s (n ...)", b=batch_size, s=n_obs_steps
+                    img_features,
+                    "(b s n) ... -> b s (n ...)",
+                    b=batch_size,
+                    s=n_obs_steps,
                 )
             global_cond_feats.append(img_features)
 
@@ -321,8 +349,7 @@ class UnetMeanFlowModel(nn.Module):
         return torch.cat(global_cond_feats, dim=-1).flatten(start_dim=1)
 
     def generate_actions(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
-        """
-        This function expects `batch` to have:
+        """This function expects `batch` to have:
         {
             "observation.state": (B, n_obs_steps, state_dim)
 
@@ -348,8 +375,7 @@ class UnetMeanFlowModel(nn.Module):
         return actions
 
     def compute_loss(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
-        """
-        This function expects `batch` to have (at least):
+        """This function expects `batch` to have (at least):
         {
             "observation.state": (B, n_obs_steps, state_dim)
 
@@ -418,7 +444,9 @@ class UnetMeanFlowModel(nn.Module):
             t: Noising timesteps. Shape: (batch_size,)
             r: Second noising timesteps for meanflow. Shape: (batch_size,)
         """
-        samples = self._sample_time_distribution(batch_size=batch_size, num_time_parameters=2)
+        samples = self._sample_time_distribution(
+            batch_size=batch_size, num_time_parameters=2
+        )
 
         t_np = np.maximum(samples[:, 0], samples[:, 1])
         r_np = np.minimum(samples[:, 0], samples[:, 1])
@@ -433,11 +461,15 @@ class UnetMeanFlowModel(nn.Module):
 
     def _sample_t(self, batch_size: int, device) -> torch.Tensor:
         """Sample a random noising timestep t for each item in the batch."""
-        samples = self._sample_time_distribution(batch_size=batch_size, num_time_parameters=1)
+        samples = self._sample_time_distribution(
+            batch_size=batch_size, num_time_parameters=1
+        )
         t = torch.tensor(samples[:, 0], device=device)
         return t
 
-    def _sample_time_distribution(self, batch_size: int, num_time_parameters: int) -> np.ndarray:
+    def _sample_time_distribution(
+        self, batch_size: int, num_time_parameters: int
+    ) -> np.ndarray:
         """Sample from the configured time distribution.
 
         Args:
@@ -456,7 +488,9 @@ class UnetMeanFlowModel(nn.Module):
             )
             samples = 1 / (1 + np.exp(-normal_samples))  # Apply sigmoid
         else:
-            raise ValueError(f"Unknown time distribution: {self.config.time_distribution}")
+            raise ValueError(
+                f"Unknown time distribution: {self.config.time_distribution}"
+            )
         return samples
 
     @staticmethod
@@ -501,7 +535,9 @@ class UnetMeanFlowModel(nn.Module):
             conditional_mask = torch.rand_like(t) < self.config.cfg_prob
             unconditional_cond = torch.zeros_like(global_cond)
             global_cond = torch.where(
-                condition=conditional_mask.unsqueeze(-1), input=unconditional_cond, other=global_cond
+                condition=conditional_mask.unsqueeze(-1),
+                input=unconditional_cond,
+                other=global_cond,
             )
             with torch.no_grad():
                 u_uncond = self.unet(
@@ -511,7 +547,11 @@ class UnetMeanFlowModel(nn.Module):
                     global_cond=unconditional_cond,
                 )
             v_hat = self.config.cfg_omega * v + (1 - self.config.cfg_omega) * u_uncond
-            v_hat = torch.where(condition=conditional_mask.unsqueeze(-1).unsqueeze(-1), input=v, other=v_hat)
+            v_hat = torch.where(
+                condition=conditional_mask.unsqueeze(-1).unsqueeze(-1),
+                input=v,
+                other=v_hat,
+            )
         else:
             v_hat = v
 
@@ -525,7 +565,6 @@ class UnetMeanFlowModel(nn.Module):
                 global_cond=global_cond,
             )
 
-        # FIXED: Use configurable jvp method
         u, dudt = self.jvp(
             func=model_partial,
             primals=(noisy_trajectory, t, r),
@@ -595,7 +634,9 @@ class UnetMeanFlowConv1dBlock(nn.Module):
         super().__init__()
 
         self.block = nn.Sequential(
-            nn.Conv1d(inp_channels, out_channels, kernel_size, padding=kernel_size // 2),
+            nn.Conv1d(
+                inp_channels, out_channels, kernel_size, padding=kernel_size // 2
+            ),
             nn.GroupNorm(n_groups, out_channels),
             nn.Mish(),
         )
@@ -618,16 +659,24 @@ class UnetMeanFlowConditionalUnet1d(nn.Module):
         # Encoder for the diffusion timestep - we need two encoders for t and r
         self.diffusion_step_encoder_t = nn.Sequential(
             UnetMeanFlowSinusoidalPosEmb(config.diffusion_step_embed_dim),
-            nn.Linear(config.diffusion_step_embed_dim, config.diffusion_step_embed_dim * 4),
+            nn.Linear(
+                config.diffusion_step_embed_dim, config.diffusion_step_embed_dim * 4
+            ),
             nn.Mish(),
-            nn.Linear(config.diffusion_step_embed_dim * 4, config.diffusion_step_embed_dim),
+            nn.Linear(
+                config.diffusion_step_embed_dim * 4, config.diffusion_step_embed_dim
+            ),
         )
 
         self.diffusion_step_encoder_r = nn.Sequential(
             UnetMeanFlowSinusoidalPosEmb(config.diffusion_step_embed_dim),
-            nn.Linear(config.diffusion_step_embed_dim, config.diffusion_step_embed_dim * 4),
+            nn.Linear(
+                config.diffusion_step_embed_dim, config.diffusion_step_embed_dim * 4
+            ),
             nn.Mish(),
-            nn.Linear(config.diffusion_step_embed_dim * 4, config.diffusion_step_embed_dim),
+            nn.Linear(
+                config.diffusion_step_embed_dim * 4, config.diffusion_step_embed_dim
+            ),
         )
 
         # The FiLM conditioning dimension - includes both time embeddings
@@ -652,10 +701,16 @@ class UnetMeanFlowConditionalUnet1d(nn.Module):
             self.down_modules.append(
                 nn.ModuleList(
                     [
-                        UnetMeanFlowConditionalResidualBlock1d(dim_in, dim_out, **common_res_block_kwargs),
-                        UnetMeanFlowConditionalResidualBlock1d(dim_out, dim_out, **common_res_block_kwargs),
+                        UnetMeanFlowConditionalResidualBlock1d(
+                            dim_in, dim_out, **common_res_block_kwargs
+                        ),
+                        UnetMeanFlowConditionalResidualBlock1d(
+                            dim_out, dim_out, **common_res_block_kwargs
+                        ),
                         # Downsample as long as it is not the last block.
-                        nn.Conv1d(dim_out, dim_out, 3, 2, 1) if not is_last else nn.Identity(),
+                        nn.Conv1d(dim_out, dim_out, 3, 2, 1)
+                        if not is_last
+                        else nn.Identity(),
                     ]
                 )
             )
@@ -664,10 +719,14 @@ class UnetMeanFlowConditionalUnet1d(nn.Module):
         self.mid_modules = nn.ModuleList(
             [
                 UnetMeanFlowConditionalResidualBlock1d(
-                    config.down_dims[-1], config.down_dims[-1], **common_res_block_kwargs
+                    config.down_dims[-1],
+                    config.down_dims[-1],
+                    **common_res_block_kwargs,
                 ),
                 UnetMeanFlowConditionalResidualBlock1d(
-                    config.down_dims[-1], config.down_dims[-1], **common_res_block_kwargs
+                    config.down_dims[-1],
+                    config.down_dims[-1],
+                    **common_res_block_kwargs,
                 ),
             ]
         )
@@ -683,19 +742,27 @@ class UnetMeanFlowConditionalUnet1d(nn.Module):
                         UnetMeanFlowConditionalResidualBlock1d(
                             dim_in * 2, dim_out, **common_res_block_kwargs
                         ),
-                        UnetMeanFlowConditionalResidualBlock1d(dim_out, dim_out, **common_res_block_kwargs),
+                        UnetMeanFlowConditionalResidualBlock1d(
+                            dim_out, dim_out, **common_res_block_kwargs
+                        ),
                         # Upsample as long as it is not the last block.
-                        nn.ConvTranspose1d(dim_out, dim_out, 4, 2, 1) if not is_last else nn.Identity(),
+                        nn.ConvTranspose1d(dim_out, dim_out, 4, 2, 1)
+                        if not is_last
+                        else nn.Identity(),
                     ]
                 )
             )
 
         self.final_conv = nn.Sequential(
-            UnetMeanFlowConv1dBlock(config.down_dims[0], config.down_dims[0], kernel_size=config.kernel_size),
+            UnetMeanFlowConv1dBlock(
+                config.down_dims[0], config.down_dims[0], kernel_size=config.kernel_size
+            ),
             nn.Conv1d(config.down_dims[0], config.action_feature.shape[0], 1),
         )
 
-    def forward(self, x: torch.Tensor, t: torch.Tensor, r: torch.Tensor, global_cond=None) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, t: torch.Tensor, r: torch.Tensor, global_cond=None
+    ) -> torch.Tensor:
         """
         Args:
             x: (B, T, input_dim) tensor for input to the Unet.
@@ -710,7 +777,6 @@ class UnetMeanFlowConditionalUnet1d(nn.Module):
 
         # Encode both time parameters
         timesteps_embed_t = self.diffusion_step_encoder_t(t)
-        # FIXED: Encode (t - r) instead of r directly (matching DiTMeanFlow)
         timesteps_embed_r = self.diffusion_step_encoder_r(t - r)
 
         # Combine time embeddings
@@ -765,17 +831,23 @@ class UnetMeanFlowConditionalResidualBlock1d(nn.Module):
         self.use_film_scale_modulation = use_film_scale_modulation
         self.out_channels = out_channels
 
-        self.conv1 = UnetMeanFlowConv1dBlock(in_channels, out_channels, kernel_size, n_groups=n_groups)
+        self.conv1 = UnetMeanFlowConv1dBlock(
+            in_channels, out_channels, kernel_size, n_groups=n_groups
+        )
 
         # FiLM modulation (https://huggingface.co/papers/1709.07871) outputs per-channel bias and (maybe) scale.
         cond_channels = out_channels * 2 if use_film_scale_modulation else out_channels
         self.cond_encoder = nn.Sequential(nn.Mish(), nn.Linear(cond_dim, cond_channels))
 
-        self.conv2 = UnetMeanFlowConv1dBlock(out_channels, out_channels, kernel_size, n_groups=n_groups)
+        self.conv2 = UnetMeanFlowConv1dBlock(
+            out_channels, out_channels, kernel_size, n_groups=n_groups
+        )
 
         # A final convolution for dimension matching the residual (if needed).
         self.residual_conv = (
-            nn.Conv1d(in_channels, out_channels, 1) if in_channels != out_channels else nn.Identity()
+            nn.Conv1d(in_channels, out_channels, 1)
+            if in_channels != out_channels
+            else nn.Identity()
         )
 
     def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
@@ -847,7 +919,9 @@ class SpatialSoftmax(nn.Module):
 
         # we could use torch.linspace directly but that seems to behave slightly differently than numpy
         # and causes a small degradation in pc_success of pre-trained models.
-        pos_x, pos_y = np.meshgrid(np.linspace(-1.0, 1.0, self._in_w), np.linspace(-1.0, 1.0, self._in_h))
+        pos_x, pos_y = np.meshgrid(
+            np.linspace(-1.0, 1.0, self._in_w), np.linspace(-1.0, 1.0, self._in_h)
+        )
         pos_x = torch.from_numpy(pos_x.reshape(self._in_h * self._in_w, 1)).float()
         pos_y = torch.from_numpy(pos_y.reshape(self._in_h * self._in_w, 1)).float()
         # register as buffer so it's moved to the correct device.
@@ -889,7 +963,9 @@ class UnetMeanFlowRgbEncoder(nn.Module):
             # Always use center crop for eval
             self.center_crop = torchvision.transforms.CenterCrop(config.crop_shape)
             if config.crop_is_random:
-                self.maybe_random_crop = torchvision.transforms.RandomCrop(config.crop_shape)
+                self.maybe_random_crop = torchvision.transforms.RandomCrop(
+                    config.crop_shape
+                )
             else:
                 self.maybe_random_crop = self.center_crop
         else:
@@ -910,7 +986,9 @@ class UnetMeanFlowRgbEncoder(nn.Module):
             self.backbone = _replace_submodules(
                 root_module=self.backbone,
                 predicate=lambda x: isinstance(x, nn.BatchNorm2d),
-                func=lambda x: nn.GroupNorm(num_groups=x.num_features // 16, num_channels=x.num_features),
+                func=lambda x: nn.GroupNorm(
+                    num_groups=x.num_features // 16, num_channels=x.num_features
+                ),
             )
 
         # Set up pooling and final layers.
@@ -921,11 +999,15 @@ class UnetMeanFlowRgbEncoder(nn.Module):
 
         # Note: we have a check in the config class to make sure all images have the same shape.
         images_shape = next(iter(config.image_features.values())).shape
-        dummy_shape_h_w = config.crop_shape if config.crop_shape is not None else images_shape[1:]
+        dummy_shape_h_w = (
+            config.crop_shape if config.crop_shape is not None else images_shape[1:]
+        )
         dummy_shape = (1, images_shape[0], *dummy_shape_h_w)
         feature_map_shape = get_output_shape(self.backbone, dummy_shape)[1:]
 
-        self.pool = SpatialSoftmax(feature_map_shape, num_kp=config.spatial_softmax_num_keypoints)
+        self.pool = SpatialSoftmax(
+            feature_map_shape, num_kp=config.spatial_softmax_num_keypoints
+        )
         self.feature_dim = config.spatial_softmax_num_keypoints * 2
         self.out = nn.Linear(config.spatial_softmax_num_keypoints * 2, self.feature_dim)
         self.relu = nn.ReLU()
@@ -952,7 +1034,9 @@ class UnetMeanFlowRgbEncoder(nn.Module):
 
 
 def _replace_submodules(
-    root_module: nn.Module, predicate: Callable[[nn.Module], bool], func: Callable[[nn.Module], nn.Module]
+    root_module: nn.Module,
+    predicate: Callable[[nn.Module], bool],
+    func: Callable[[nn.Module], nn.Module],
 ) -> nn.Module:
     """
     Args:
@@ -965,7 +1049,11 @@ def _replace_submodules(
     if predicate(root_module):
         return func(root_module)
 
-    replace_list = [k.split(".") for k, m in root_module.named_modules(remove_duplicate=True) if predicate(m)]
+    replace_list = [
+        k.split(".")
+        for k, m in root_module.named_modules(remove_duplicate=True)
+        if predicate(m)
+    ]
     for *parents, k in replace_list:
         parent_module = root_module
         if len(parents) > 0:
@@ -980,5 +1068,7 @@ def _replace_submodules(
         else:
             setattr(parent_module, k, tgt_module)
     # verify that all BN are replaced
-    assert not any(predicate(m) for _, m in root_module.named_modules(remove_duplicate=True))
+    assert not any(
+        predicate(m) for _, m in root_module.named_modules(remove_duplicate=True)
+    )
     return root_module
